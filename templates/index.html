@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Binary Search Guide</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+
+  <!-- Three.js local files se (internet ki zaroorat nahi) -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "{{ url_for('static', filename='vendor/three/three.module.js') }}",
+      "three/addons/": "{{ url_for('static', filename='vendor/three/addons/') }}"
+    }
+  }
+  </script>
+</head>
+<body data-model="{{ url_for('static', filename='models/character.glb') }}"
+      data-natural-voice="{{ 'true' if natural_voice_enabled else 'false' }}">
+
+  <!-- 1) Preloader -->
+  <div id="preloader">
+    <div class="pre-card">
+      <h1>Binary Search Guide</h1>
+      <div class="dots"><i></i><i></i><i></i></div>
+      <p id="preText">Waking up your guide…</p>
+      <div class="bar"><span id="preBar"></span></div>
+    </div>
+  </div>
+
+  <canvas id="stage"></canvas>
+  <div id="board"></div>
+
+  <div id="status" class="chip hidden"></div>
+
+  <!-- Presentation ke liye: har step ke baad Down Arrow dabane ka intezar -->
+  <div id="mode" class="pillbar" aria-label="Step mode">
+    <span>Steps</span>
+    <button data-m="manual" class="on">Manual ↓</button>
+    <button data-m="auto">Auto</button>
+  </div>
+
+  <button id="hint" class="hint hidden" type="button"></button>
+
+  <div id="speed" class="pillbar" aria-label="Speed">
+    <span>Speed</span>
+    <button data-s="1" class="on">1×</button>
+    <button data-s="1.5">1.5×</button>
+    <button data-s="2">2×</button>
+  </div>
+
+  <!-- Character ka speech bubble -->
+  <div id="bubble" class="bubble hidden" data-side="right">
+    <p><span class="typed"></span><span class="rest"></span></p>
+  </div>
+
+  <div class="chat-widget">
+    <p id="chatError" class="chat-error" role="alert"></p>
+    <form id="chatForm" class="chat-form" aria-label="Send a message to the guide">
+      <label class="sr-only" for="chatInput">Message the guide</label>
+      <input id="chatInput" type="text" maxlength="1200" placeholder="Ask the guide…" autocomplete="off" required>
+      <button id="chatSend" class="btn" type="submit">
+        <span id="chatSendSpinner" class="send-spinner hidden" aria-hidden="true"></span>
+        <span id="chatSendLabel">Send</span>
+      </button>
+    </form>
+    <p id="chatStatus" class="chat-status" role="status" aria-live="polite"></p>
+  </div>
+
+  <button id="again" class="btn hidden" type="button">Search again</button>
+
+  <!-- 2) Popup form -->
+  <div id="modal" class="modal hidden">
+    <form id="form" class="card" autocomplete="off">
+      <h2>Let the guide search for you</h2>
+      <p class="sub">Enter your numbers and the one to find. The guide does the rest.</p>
+
+      <label for="arrayInput">Array <small>({{ min_items }}–{{ max_items }} numbers, separated by commas)</small></label>
+      <input id="arrayInput" type="text" placeholder="e.g. 42, 7, 19, 88, 3, 56, 23" required>
+
+      <label for="targetInput">Number to find</label>
+      <input id="targetInput" type="number" step="1" placeholder="e.g. 23" required>
+
+      <label for="langInput">Guide speaks</label>
+      <select id="langInput">
+        <option value="en">English</option>
+        <option value="ur">Roman Urdu</option>
+      </select>
+
+      <label>Guide's skin tone</label>
+      <div class="tones" role="radiogroup" aria-label="Skin tone">
+        <label class="tone"><input type="radio" name="tone" value="original" checked><span style="--c:#8a5a3c"></span><em>Original</em></label>
+        <label class="tone"><input type="radio" name="tone" value="fair"><span style="--c:#f2cdb0"></span><em>Fair</em></label>
+        <label class="tone"><input type="radio" name="tone" value="wheatish"><span style="--c:#dfae80"></span><em>Wheatish</em></label>
+        <label class="tone"><input type="radio" name="tone" value="tan"><span style="--c:#b87f56"></span><em>Tan</em></label>
+        <label class="tone"><input type="radio" name="tone" value="deep"><span style="--c:#6b4129"></span><em>Deep</em></label>
+      </div>
+
+      <p id="formError" class="error" role="alert"></p>
+
+      <div class="actions">
+        <button id="example" class="btn ghost" type="button">Use an example</button>
+        <button id="startBtn" class="btn" type="submit">Start</button>
+      </div>
+    </form>
+  </div>
+
+  <script type="module" src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>
