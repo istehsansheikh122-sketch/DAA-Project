@@ -41,6 +41,71 @@ function applySpeed(s) {
 }
 document.querySelectorAll('#speed button').forEach(b => b.addEventListener('click', () => applySpeed(Number(b.dataset.s))));
 
+// ---------------- background music ----------------
+const music = $('#backgroundMusic');
+const musicFile = $('#musicFile');
+const musicToggle = $('#musicToggle');
+const musicStatus = $('#musicStatus');
+let musicUrl = null;
+music.volume = 0.12;
+music.muted = true;
+music.dataset.usingDefault = 'true';
+music.play().catch(() => {
+  musicStatus.textContent = 'Add your MP3 at static/audio/background-music.mp3.';
+});
+
+music.addEventListener('error', () => {
+  if (music.dataset.usingDefault === 'true') {
+    musicStatus.textContent = 'Add your MP3 at static/audio/background-music.mp3.';
+  } else {
+    musicStatus.textContent = 'Could not play this file. Choose a supported audio file.';
+  }
+});
+
+$('#chooseMusic').addEventListener('click', () => musicFile.click());
+musicFile.addEventListener('change', () => {
+  const file = musicFile.files[0];
+  if (!file) return;
+  if (musicUrl) URL.revokeObjectURL(musicUrl);
+  musicUrl = URL.createObjectURL(file);
+  music.dataset.usingDefault = 'false';
+  music.src = musicUrl;
+  music.load();
+  music.muted = true;
+  musicToggle.textContent = 'Unmute music';
+  musicToggle.setAttribute('aria-pressed', 'false');
+  musicStatus.textContent = `${file.name} · playing quietly, muted`;
+  music.play().catch(() => {
+    musicStatus.textContent = 'Could not play this file. Choose a supported audio file.';
+  });
+});
+
+musicToggle.addEventListener('click', async () => {
+  if (!music.src) {
+    musicStatus.textContent = 'Choose an audio file before unmuting.';
+    return;
+  }
+  music.muted = !music.muted;
+  if (!music.muted && music.paused) {
+    try {
+      await music.play();
+    } catch {
+      music.muted = true;
+      musicToggle.textContent = 'Unmute music';
+      musicToggle.setAttribute('aria-pressed', 'false');
+      musicStatus.textContent = music.dataset.usingDefault === 'true'
+        ? 'Add your MP3 at static/audio/background-music.mp3.'
+        : 'Playback was blocked. Choose the track again to retry.';
+      return;
+    }
+  }
+  const isUnmuted = !music.muted;
+  musicToggle.textContent = isUnmuted ? 'Mute music' : 'Unmute music';
+  musicToggle.setAttribute('aria-pressed', String(isUnmuted));
+  if (isUnmuted) musicStatus.textContent = 'Playing quietly · volume 12%';
+  else if (music.src) musicStatus.textContent = 'Playing quietly, muted';
+});
+
 // ---------------- manual mode: Down Arrow se next step ----------------
 let manual = true;
 let waiter = null;

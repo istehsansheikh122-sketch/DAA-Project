@@ -53,6 +53,14 @@
     <button data-s="2">2×</button>
   </div>
 
+  <div id="musicControls" class="music-controls" aria-label="Background music">
+    <button id="chooseMusic" type="button">Choose music</button>
+    <button id="musicToggle" type="button" aria-pressed="false">Unmute music</button>
+    <input id="musicFile" class="sr-only" type="file" accept="audio/*" aria-label="Choose an audio file">
+    <audio id="backgroundMusic" src="{{ url_for('static', filename='audio/background-music.mp3') }}" loop preload="none"></audio>
+    <span id="musicStatus" role="status" aria-live="polite">Default track is muted · unmute to listen.</span>
+  </div>
+
   <!-- Character ka speech bubble -->
   <div id="bubble" class="bubble hidden" data-side="right">
     <p><span class="typed"></span><span class="rest"></span></p>

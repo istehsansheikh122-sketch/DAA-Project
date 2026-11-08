@@ -83,4 +83,5 @@ ke saath ek baar dobara try karti hai.
 - **Array ki limit:** `MAX_ITEMS` in `app.py`
 - **Character ke pair ki jagah / size:** `FEET_FRAC` aur `CAM_D` in `static/js/stage.js`
 - **Speed:** page ke upar right mein 1x / 1.5x / 2x buttons
+- **Background music:** apni licensed MP3 file `static/audio/background-music.mp3` naam se rakhein. Ye default track muted start hota hai; `Unmute music` dabayein jab sunna ho. Volume 12% hai. `Choose music` se session ke liye doosri audio file bhi select kar sakte hain.
 - **Animations:** GLB ke andar clips ke naam: `walk, idle, hiphop, wave, pickup, nod, shake, dismiss, ack, happy, think, sigh`

@@ -109,6 +109,25 @@ html, body {
 }
 .pillbar button.on { background: var(--clay); color: #fff; }
 
+/* ---------- background music ---------- */
+.music-controls {
+  position: fixed; top: 64px; right: 16px; z-index: 21;
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 8px; border-radius: 999px;
+  background: rgba(251, 246, 236, .9);
+  box-shadow: 0 4px 10px var(--shadow);
+}
+.music-controls button {
+  border: 0; border-radius: 999px; padding: 6px 11px;
+  color: var(--ink-soft); background: transparent; cursor: pointer;
+  font: 700 12px 'Nunito', system-ui, sans-serif;
+}
+.music-controls button:hover, .music-controls button:focus-visible {
+  background: rgba(184, 130, 95, .15); outline-color: var(--clay);
+}
+.music-controls #musicToggle { color: #fff; background: var(--clay); }
+.music-controls span { max-width: 190px; color: var(--ink-soft); font-size: 11px; }
+
 /* "Press ↓" wala hint (step ke baad intezar) */
 .hint {
   position: fixed; left: 50%; top: 16px; transform: translateX(-50%); z-index: 9;
@@ -234,6 +253,8 @@ html, body {
 @media (max-width: 560px) {
   .bubble { max-width: min(320px, calc(100vw - 24px)); max-height: 48vh; font-size: 15px; padding: 12px 16px; }
   #speed span { display: none; }
+  .music-controls { top: 62px; right: 10px; }
+  .music-controls span { display: none; }
 }
 
 /* ---------- character message input ---------- */
