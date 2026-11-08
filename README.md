@@ -11,6 +11,13 @@ python app.py
 
 Browser mein kholein: http://127.0.0.1:5000
 
+## Railway par deploy karna
+
+GitHub repository ko Railway se connect karein. `Procfile` Gunicorn web server
+start karta hai, jo Railway ke `PORT` par `0.0.0.0` se listen karta hai. AI chat
+aur speech ke liye zaroori API keys Railway service ke Variables tab mein set
+karein; `.env` ko GitHub par upload na karein.
+
 ## AI chat aur spoken replies
 
 Project root ki `.env` file mein apni OpenRouter key daalein:
