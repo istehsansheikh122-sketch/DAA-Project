@@ -16,12 +16,14 @@ export class ArrayView {
   }
 
   // ----- layout -----
-  get rowY() { return innerHeight * 0.30; }          // array upar-beech mein (focus yahan)
+  get rowY() { return innerWidth < 700 ? Math.max(150, innerHeight * 0.27) : innerHeight * 0.30; }          // array upar-beech mein (focus yahan)
 
   computeLayout() {
     const n = Math.max(1, this.items.length);
-    this.gap = Math.max(10, Math.min(22, innerWidth * 0.014));
-    this.size = Math.max(36, Math.min(104, (innerWidth - 64 - (n - 1) * this.gap) / n));
+    const narrow = innerWidth < 700;
+    this.gap = narrow ? 4 : Math.max(10, Math.min(22, innerWidth * 0.014));
+    const side = narrow ? 28 : 64;
+    this.size = Math.max(narrow ? 20 : 36, Math.min(104, (innerWidth - side - (n - 1) * this.gap) / n));
     this.board.style.setProperty('--d', this.size + 'px');
     this._placeShelf();
   }
@@ -30,7 +32,7 @@ export class ArrayView {
   _placeShelf() {
     if (!this.shelf) return;
     const n = this.items.length;
-    const total = n * this.size + (n - 1) * this.gap + 64;
+    const total = n * this.size + (n - 1) * this.gap + (innerWidth < 700 ? 20 : 64);
     this.shelf.style.width = total + 'px';
     this.shelf.style.transform = `translate(${(innerWidth - total) / 2}px, ${this.rowY + this.size / 2 - 6}px)`;
   }
@@ -197,6 +199,18 @@ export class ArrayView {
   hidePointers() {
     this.ptrState = null;
     Object.values(this.ptrEls).forEach(el => el.classList.remove('on'));
+  }
+
+  // ----- agent ke kehne par kuch boxes ko kuch der highlight karo -----
+  pulse(indices) {
+    indices.forEach(i => {
+      const el = this.slots[i] && this.slots[i].el;
+      if (!el) return;
+      el.classList.remove('pulse');
+      void el.offsetWidth;
+      el.classList.add('pulse');
+      setTimeout(() => el.classList.remove('pulse'), 3200 / this.speed);
+    });
   }
 
   // ----- search states -----

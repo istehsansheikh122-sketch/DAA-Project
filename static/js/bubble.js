@@ -1,31 +1,17 @@
-// Character ke chehre ke saath wala speech bubble (typewriter effect).
-function formatBubbleText(text) {
-  return text
-    .replace(/\r\n?/g, '\n')
-    .replace(/```[^\n]*\n?([\s\S]*?)```/g, '$1')
-    .replace(/^#{1,6}\s+/gm, '')
-    .replace(/\*\*(.*?)\*\*|__(.*?)__/g, '$1$2')
-    .replace(/(?<!\*)\*([^*\n]+)\*|(?<!_)_([^_\n]+)_/g, '$1$2')
-    .replace(/`([^`]+)`/g, '$1')
-    .replace(/^[ \t]*[-*+][ \t]+/gm, '• ')
-    .replace(/[ \t]+[-*][ \t]+/g, '\n• ')
-    .replace(/[ \t]+(Step \d+:)/gi, '\n$1')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-}
+// Character ke chehre ke saath wala speech bubble: typewriter + awaaz (voice) + bolne ki movement.
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 export class Bubble {
-  constructor(el, getAnchor, onSpeak) {
+  constructor(el, getAnchor, { speech = null, onTalk = () => {} } = {}) {
     this.el = el;
     this.typed = el.querySelector('.typed');
     this.rest = el.querySelector('.rest');
     this.getAnchor = getAnchor;
-    this.onSpeak = onSpeak;
+    this.speech = speech;
+    this.onTalk = onTalk;           // true/false: character bol raha hai ya nahi (movement ke liye)
     this.speed = 1;
     this.pos = null;
     this.shown = false;
-    this.sayId = 0;
-    this.resolveAnimation = null;
     requestAnimationFrame(() => this.follow());
   }
 
@@ -36,10 +22,19 @@ export class Bubble {
     const w = this.el.offsetWidth, h = this.el.offsetHeight;
     const gap = 54;
     let side = 'right';
-    let x = a.x + gap;
-    if (x + w > innerWidth - 12) { side = 'left'; x = a.x - gap - w; }
-    x = Math.max(12, x);
-    const y = Math.max(12, Math.min(a.y - h * 0.5, innerHeight - h - 12));
+    let x, y;
+    if (innerWidth < 700) {
+      // phone: bubble sar ke upar, tail neeche character ki taraf
+      side = 'bottom';
+      x = Math.max(12, Math.min(innerWidth - w - 12, a.x - w / 2));
+      y = Math.max(96, a.y - h - 62);
+      this.el.style.setProperty('--tail', Math.max(26, Math.min(w - 26, a.x - x)) + 'px');
+    } else {
+      x = a.x + gap;
+      if (x + w > innerWidth - 12) { side = 'left'; x = a.x - gap - w; }
+      x = Math.max(12, x);
+      y = Math.max(12, a.y - h * 0.5);
+    }
     if (!this.pos) this.pos = { x, y };
     this.pos.x += (x - this.pos.x) * 0.25;
     this.pos.y += (y - this.pos.y) * 0.25;
@@ -50,45 +45,48 @@ export class Bubble {
   show() { this.shown = true; this.el.classList.remove('hidden'); }
   hide() { this.shown = false; this.pos = null; this.el.classList.add('hidden'); }
 
-  // text type karo, phir padhne ka waqt do
-  say(text) {
-    const id = ++this.sayId;
-    if (this.resolveAnimation) this.resolveAnimation();
-    const displayText = formatBubbleText(text);
+  // "soch raha hai..." (jab LLM ka jawab aa raha ho)
+  think() {
     this.show();
+    this.el.classList.add('thinking');
+    this.typed.textContent = '…';
+    this.rest.textContent = '';
+  }
+
+  _type(text) {
+    this.el.classList.remove('thinking');
     this.typed.textContent = '';
-    this.rest.textContent = displayText;    // poora text invisible rakho, taake bubble ka size na hile
-    let speech;
-    const animation = new Promise(resolve => {
-      this.resolveAnimation = resolve;
-      let started = false;
-      const startAnimation = durationMs => {
-        if (started || id !== this.sayId) return;
-        started = true;
-        const defaultDuration = displayText.length / (38 * this.speed) * 1000;
-        const duration = Number.isFinite(durationMs) && durationMs > 0
-          ? durationMs
-          : defaultDuration;
-        const start = performance.now();
-        const frame = now => {
-          if (id !== this.sayId) return resolve();
-          const progress = Math.min(1, (now - start) / duration);
-          const n = Math.min(displayText.length, Math.floor(progress * displayText.length));
-          this.typed.textContent = displayText.slice(0, n);
-          this.rest.textContent = displayText.slice(n);
-          if (progress < 1) requestAnimationFrame(frame);
-          else setTimeout(() => {
-            if (id === this.sayId) this.resolveAnimation = null;
-            resolve();
-          }, (650 + displayText.length * 22) / this.speed);
-        };
-        requestAnimationFrame(frame);
+    this.rest.textContent = text;           // poora text invisible rakho, taake bubble ka size na hile
+    const cps = 38 * this.speed;
+    return new Promise(resolve => {
+      const start = performance.now();
+      const frame = now => {
+        const n = Math.min(text.length, Math.floor((now - start) / 1000 * cps));
+        this.typed.textContent = text.slice(0, n);
+        this.rest.textContent = text.slice(n);
+        if (n < text.length) requestAnimationFrame(frame);
+        else resolve();
       };
-      speech = this.onSpeak
-        ? this.onSpeak(text, startAnimation)
-        : (startAnimation(), Promise.resolve());
-      speech = Promise.resolve(speech).catch(() => startAnimation());
+      requestAnimationFrame(frame);
     });
-    return Promise.all([animation, speech]);
+  }
+
+  // text type karo + (voice on ho to) bolo + movement. Jab sab khatam ho tab resolve.
+  async say(text) {
+    this.show();
+    this.onTalk(true);
+    const hold = (650 + text.length * 22) / this.speed;
+    const t0 = performance.now();
+    const speaking = this.speech && this.speech.enabled ? this.speech.speak(text) : null;
+    await this._type(text);
+    if (speaking) {
+      await speaking;
+      // awaaz foran khatam ho gayi (voice nahi mili / error)? to normal padhne ka waqt do
+      if (performance.now() - t0 < Math.min(1500, text.length * 20)) await sleep(hold);
+      else await sleep(350 / this.speed);
+    } else {
+      await sleep(hold);
+    }
+    this.onTalk(false);
   }
 }

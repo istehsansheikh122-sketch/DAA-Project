@@ -2,20 +2,28 @@ import { createStage, PICK_TIME } from './stage.js';
 import { ArrayView } from './array-view.js';
 import { Bubble } from './bubble.js';
 import { MESSAGES } from './i18n.js';
+import { Speech, Listener } from './speech.js';
+import { Chat } from './chat.js';
+import { Music } from './music.js';
 
 const $ = s => document.querySelector(s);
-let SPEED = Number(new URLSearchParams(location.search).get('speed')) || 1;
+const params = new URLSearchParams(location.search);
+let SPEED = Number(params.get('speed')) || 1;
 const sleep = ms => new Promise(r => setTimeout(r, ms / SPEED));
 const rawSleep = ms => new Promise(r => setTimeout(r, ms));
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch { /* ignore */ } },
+};
 
-const stage = createStage($('#stage'));
-const view = new ArrayView($('#board'));
-const bubble = new Bubble($('#bubble'), () => stage.headPx(), speakCharacter);
-const chatHistory = [];
-let chatContext = { phase: 'idle' };
-let speechId = 0;
-let currentAudio = null;
-let currentAudioUrl = null;
+// Characters. Sab Mixamo ke hain, is liye original wali animations (character.glb) sab par chalti hain.
+const MODELS_BASE = document.body.dataset.modelsBase;
+const CHARACTERS = {
+  original: { id: 'original', type: 'glb', url: document.body.dataset.model, tone: true },
+  knight: { id: 'knight', type: 'fbx', url: MODELS_BASE + 'knight.fbx', tone: true, skin: { meshes: '^Head_Hands$', vmin: 0.5, maxSize: 1024 } },
+  arissa: { id: 'arissa', type: 'fbx', url: MODELS_BASE + 'arissa.fbx', tone: true, skin: { meshes: '^arissaBody_Geo$', vmin: 0.5, maxSize: 1024 } },
+  boy: { id: 'boy', type: 'fbx', url: MODELS_BASE + 'boy.fbx', tone: true, skin: { meshes: '^Boy01_Body_Geo$', vmin: 0.5, maxSize: 1024 } },
+};
 
 // Skin tones (RGB 0-1). null = original texture. Naya tone chahiye to yahan add karein
 // (aur index.html ke swatches mein ek input add karein).
@@ -27,113 +35,103 @@ const SKIN_TONES = {
   deep:     [0.45, 0.29, 0.19],
 };
 
+const stage = createStage($('#stage'));
+const view = new ArrayView($('#board'));
+const speech = new Speech();
+const listener = new Listener();
+const music = new Music(document.body.dataset.audioBase);
+const bubble = new Bubble($('#bubble'), () => stage.headPx(), {
+  speech,
+  onTalk: on => { stage.setTalking(on); music.duck(on); },
+});
+speech.onBoundary = () => stage.emphasize();
+
 let lang = 'en';
+let llmProvider = null;
 let currentIdx = 0;
 let running = false;
+let session = null;          // chal rahi search ki state (chat ko context dene ke liye)
+let asking = false;          // character abhi kisi sawal ka jawab de raha hai
+let demoNoted = false;
+const chatHistory = [];
+const M = () => MESSAGES[lang];
+
+const chat = new Chat({ onSubmit: text => ask(text), listener, getLang: () => lang });
+
+if (params.has('debug')) window.__bsg = { stage, view, speech, bubble, chat, music };
 
 // ---------------- speed buttons ----------------
 function applySpeed(s) {
   SPEED = s;
   view.speed = s;
   bubble.speed = s;
+  speech.rate = 1 + (s - 1) * 0.6;          // 1x -> 1.0, 1.5x -> 1.3, 2x -> 1.6
   stage.setSpeed(s);
   document.querySelectorAll('#speed button').forEach(b => b.classList.toggle('on', Number(b.dataset.s) === s));
 }
 document.querySelectorAll('#speed button').forEach(b => b.addEventListener('click', () => applySpeed(Number(b.dataset.s))));
 
+// ---------------- voice on/off ----------------
+function applyVoice(on) {
+  speech.enabled = on && speech.supported;
+  if (!speech.enabled) speech.cancel();
+  document.querySelectorAll('#voice button').forEach(b => b.classList.toggle('on', (b.dataset.v === 'on') === on));
+  store.set('bsg.voice', on ? 'on' : 'off');
+}
+document.querySelectorAll('#voice button').forEach(b => b.addEventListener('click', () => applyVoice(b.dataset.v === 'on')));
+
 // ---------------- background music ----------------
-const music = $('#backgroundMusic');
-const musicFile = $('#musicFile');
-const musicToggle = $('#musicToggle');
-const musicStatus = $('#musicStatus');
-let musicUrl = null;
-music.volume = 0.12;
-music.muted = true;
-music.dataset.usingDefault = 'true';
-music.play().catch(() => {
-  musicStatus.textContent = 'Add your MP3 at static/audio/background-music.mp3.';
-});
-
-music.addEventListener('error', () => {
-  if (music.dataset.usingDefault === 'true') {
-    musicStatus.textContent = 'Add your MP3 at static/audio/background-music.mp3.';
-  } else {
-    musicStatus.textContent = 'Could not play this file. Choose a supported audio file.';
-  }
-});
-
-$('#chooseMusic').addEventListener('click', () => musicFile.click());
-musicFile.addEventListener('change', () => {
-  const file = musicFile.files[0];
-  if (!file) return;
-  if (musicUrl) URL.revokeObjectURL(musicUrl);
-  musicUrl = URL.createObjectURL(file);
-  music.dataset.usingDefault = 'false';
-  music.src = musicUrl;
-  music.load();
-  music.muted = true;
-  musicToggle.textContent = 'Unmute music';
-  musicToggle.setAttribute('aria-pressed', 'false');
-  musicStatus.textContent = `${file.name} · playing quietly, muted`;
-  music.play().catch(() => {
-    musicStatus.textContent = 'Could not play this file. Choose a supported audio file.';
-  });
-});
-
-musicToggle.addEventListener('click', async () => {
-  if (!music.src) {
-    musicStatus.textContent = 'Choose an audio file before unmuting.';
-    return;
-  }
-  music.muted = !music.muted;
-  if (!music.muted && music.paused) {
-    try {
-      await music.play();
-    } catch {
-      music.muted = true;
-      musicToggle.textContent = 'Unmute music';
-      musicToggle.setAttribute('aria-pressed', 'false');
-      musicStatus.textContent = music.dataset.usingDefault === 'true'
-        ? 'Add your MP3 at static/audio/background-music.mp3.'
-        : 'Playback was blocked. Choose the track again to retry.';
-      return;
-    }
-  }
-  const isUnmuted = !music.muted;
-  musicToggle.textContent = isUnmuted ? 'Mute music' : 'Unmute music';
-  musicToggle.setAttribute('aria-pressed', String(isUnmuted));
-  if (isUnmuted) musicStatus.textContent = 'Playing quietly · volume 12%';
-  else if (music.src) musicStatus.textContent = 'Playing quietly, muted';
-});
+// Browser music tab tak shuru nahi karne deta jab tak user kuch click / tap na kare, is liye
+// pehle click par (form Start) shuru hoti hai agar pehle On rakhi ho.
+let musicWanted = store.get('bsg.music') === 'on';
+function paintMusic(on) {
+  document.querySelectorAll('#music button').forEach(b => b.classList.toggle('on', (b.dataset.mu === 'on') === on));
+}
+paintMusic(musicWanted);
+document.querySelectorAll('#music button').forEach(b => b.addEventListener('click', async () => {
+  musicWanted = b.dataset.mu === 'on';
+  store.set('bsg.music', musicWanted ? 'on' : 'off');
+  paintMusic(musicWanted);
+  const ok = await music.setEnabled(musicWanted);
+  if (musicWanted && !ok) { musicWanted = false; store.set('bsg.music', 'off'); }
+  paintMusic(musicWanted);
+}));
+addEventListener('pointerdown', () => { if (musicWanted && !music.enabled) music.setEnabled(true); }, { once: true });
 
 // ---------------- manual mode: Down Arrow se next step ----------------
 let manual = true;
 let waiter = null;
 const hint = $('#hint');
+const isPhone = () => matchMedia('(pointer: coarse)').matches || innerWidth < 700;
 
 function release() {
-  if (!waiter) return;
+  if (!waiter || asking) return;
   const r = waiter;
   waiter = null;
   hint.classList.add('hidden');
+  chat.setEnabled(false, M().ui.chatWait);
   r();
 }
 function waitNext(text) {
-  if (!manual) return sleep(700);                 // auto mode: thoda sa ruk kar aage
+  chat.setEnabled(true, session && session.phase === 'finished' ? M().ui.chatEnd : M().ui.chatAsk);
+  if (!manual) return sleep(700).then(() => chat.setEnabled(false, M().ui.chatWait));
   return new Promise(resolve => {
     waiter = resolve;
-    hint.textContent = text;
+    hint.textContent = isPhone() ? text.replace('Press ↓ to start the search', 'Tap here to start').replace('Press ↓ for the next step', 'Tap here for the next step').replace('Press ↓ to see the result', 'Tap here to see the result').replace(/ ?↓ dabayein/, ' yahan tap karein') : text;
     hint.classList.remove('hidden');
   });
 }
+const typingInField = el => el && ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName);
 addEventListener('keydown', e => {
-  if (e.key === 'ArrowDown' && waiter) { e.preventDefault(); release(); }
+  if (e.key === 'ArrowDown' && waiter && !typingInField(e.target)) { e.preventDefault(); release(); }
+  if (e.key === '/' && chat.enabled && !typingInField(e.target)) { e.preventDefault(); chat.focus(); }
 });
-hint.addEventListener('click', release);          // touch / mouse se bhi chal jaye
+$('#chatInput').addEventListener('keydown', e => { if (e.key === 'Escape') e.target.blur(); });
+hint.addEventListener('click', release);
 document.querySelectorAll('#mode button').forEach(b => b.addEventListener('click', () => {
   manual = b.dataset.m === 'manual';
   document.querySelectorAll('#mode button').forEach(x => x.classList.toggle('on', x === b));
-  if (!manual) release();                         // Auto par jate hi ruka hua step chal pade
+  if (!manual) release();
 }));
 
 // ---------------- status chip ----------------
@@ -144,12 +142,38 @@ function status(text) {
   el.classList.remove('hidden');
 }
 
+// ---------------- voice select (form) ----------------
+function fillVoices() {
+  const sel = $('#voiceInput');
+  const l = $('#langInput').value;
+  sel.innerHTML = '<option value="">Automatic</option>';
+  if (!speech.supported) { sel.disabled = true; sel.firstChild.textContent = 'Not supported in this browser'; return; }
+  for (const v of speech.voicesFor(l)) {
+    const o = document.createElement('option');
+    o.value = v.voiceURI;
+    o.textContent = `${v.name} (${v.lang})`;
+    sel.appendChild(o);
+  }
+  const saved = store.get('bsg.voiceURI.' + l);
+  if (saved && [...sel.options].some(o => o.value === saved)) sel.value = saved;
+}
+$('#langInput').addEventListener('change', fillVoices);
+
+// ---------------- character select (form) ----------------
+const charSel = $('#charInput');
+{ const saved = store.get('bsg.char'); if (saved && CHARACTERS[saved]) charSel.value = saved; }
+function syncToneBox() { $('#toneBox').style.display = CHARACTERS[charSel.value].tone ? '' : 'none'; }
+charSel.addEventListener('change', syncToneBox);
+syncToneBox();
+
 // ---------------- preloader ----------------
 async function boot() {
   const bar = $('#preBar');
   try {
     await Promise.all([
-      stage.load(p => { bar.style.width = Math.round(p * 100) + '%'; }),
+      stage.load(CHARACTERS[store.get('bsg.char')] || CHARACTERS.original, p => { bar.style.width = Math.round(p * 100) + '%'; }),
+      speech.ready(),
+      fetch('/api/config').then(r => r.json()).then(c => { llmProvider = c.provider; }).catch(() => {}),
       rawSleep(1600),                       // preloader thodi der dikhe
     ]);
     bar.style.width = '100%';
@@ -161,6 +185,9 @@ async function boot() {
   $('#preloader').classList.add('done');
   setTimeout(() => $('#preloader').remove(), 700);
   applySpeed(SPEED);
+  applyVoice(store.get('bsg.voice') !== 'off');
+  if (!speech.supported) document.querySelectorAll('#voice button').forEach(b => { b.disabled = true; });
+  fillVoices();
   openForm();
 }
 
@@ -204,7 +231,19 @@ form.addEventListener('submit', async e => {
     const data = await res.json();
     if (!res.ok) { errBox.textContent = data.error || 'Kuch galat ho gaya.'; return; }
     lang = $('#langInput').value;
-    stage.setSkinTone(SKIN_TONES[form.elements.tone.value] ?? null);
+    speech.lang = lang;
+    speech.voiceURI = $('#voiceInput').value;
+    store.set('bsg.voiceURI.' + lang, speech.voiceURI);
+    store.set('bsg.char', charSel.value);
+    const def = CHARACTERS[charSel.value];
+    if (stage.characterId !== def.id) {
+      const lbl = $('#startBtn').textContent;
+      $('#startBtn').textContent = 'Loading guide…';
+      try { await stage.load(def); }
+      catch (err) { console.error(err); errBox.textContent = 'Character load nahi hua. Dobara try karein.'; return; }
+      finally { $('#startBtn').textContent = lbl; }
+    }
+    stage.setSkinTone(def.tone ? (SKIN_TONES[form.elements.tone.value] ?? null) : null);
     closeForm();
     run(data).catch(err => console.error(err));
   } catch (err) {
@@ -216,229 +255,18 @@ form.addEventListener('submit', async e => {
 
 $('#again').addEventListener('click', () => {
   $('#again').classList.add('hidden');
+  speech.cancel();
   bubble.hide();
   view.clear();
   stage.placeAtPx(-300);
   stage.lookAt(null);
+  stage.setTalking(false);
+  chat.hide();
+  chat.addLog('system', M().ui.newSearch);
+  chatHistory.length = 0;
+  session = null;
   running = false;
-  chatContext = { phase: 'idle' };
   openForm();
-});
-
-// ---------------- AI chat and spoken replies ----------------
-const chatForm = $('#chatForm');
-const chatInput = $('#chatInput');
-const chatError = $('#chatError');
-
-function cancelCharacterSpeech() {
-  speechId++;
-  if ('speechSynthesis' in window) speechSynthesis.cancel();
-  if (currentAudio) {
-    currentAudio.pause();
-    currentAudio.src = '';
-    currentAudio = null;
-  }
-  if (currentAudioUrl) {
-    URL.revokeObjectURL(currentAudioUrl);
-    currentAudioUrl = null;
-  }
-  stage.setSpeaking(false);
-}
-
-function femaleVoice(voices, language) {
-  const languageVoices = voices.filter(voice => voice.lang.toLowerCase().startsWith(language));
-  const feminineName = /female|woman|samantha|victoria|karen|moira|tessa|fiona|ava|allison|susan|zira|jenny|aria|emma|natasha|sara|google us english/i;
-  const languageMatches = languageVoices.length ? languageVoices : voices;
-  const feminineVoices = languageMatches.filter(voice => feminineName.test(voice.name));
-  const candidates = feminineVoices.length ? feminineVoices : languageMatches;
-  const qualityName = /natural|neural|premium|enhanced|online|aria|jenny|ava|samantha|google us english/i;
-  return candidates.sort((a, b) => {
-    const score = voice =>
-      (qualityName.test(voice.name) ? 10 : 0) +
-      (voice.localService === false ? 2 : 0);
-    return score(b) - score(a);
-  })[0];
-}
-
-function getVoices() {
-  const voices = speechSynthesis.getVoices();
-  if (voices.length) return Promise.resolve(voices);
-  return new Promise(resolve => {
-    const timeout = setTimeout(() => {
-      speechSynthesis.removeEventListener('voiceschanged', onVoicesChanged);
-      resolve(speechSynthesis.getVoices());
-    }, 1000);
-    const onVoicesChanged = () => {
-      clearTimeout(timeout);
-      speechSynthesis.removeEventListener('voiceschanged', onVoicesChanged);
-      resolve(speechSynthesis.getVoices());
-    };
-    speechSynthesis.addEventListener('voiceschanged', onVoicesChanged, { once: true });
-  });
-}
-
-async function speakCharacter(text, onStarted) {
-  cancelCharacterSpeech();
-  const id = speechId;
-  const spokenText = text
-    .replace(/```[^\n]*\n?([\s\S]*?)```/g, '$1')
-    .replace(/^#{1,6}\s+/gm, '')
-    .replace(/\*\*(.*?)\*\*|__(.*?)__/g, '$1$2')
-    .replace(/`([^`]+)`/g, '$1')
-    .replace(/^[ \t]*[-*+][ \t]+/gm, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  if (document.body.dataset.naturalVoice === 'true') {
-    try {
-      const response = await fetch('/api/speak', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: spokenText, language: lang }),
-      });
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.error || 'Natural voice service is unavailable.');
-      }
-      const audioBlob = await response.blob();
-      if (id !== speechId) return;
-      currentAudioUrl = URL.createObjectURL(audioBlob);
-      currentAudio = new Audio(currentAudioUrl);
-      return await new Promise(resolve => {
-        let finished = false;
-        const finish = () => {
-          if (finished) return;
-          finished = true;
-          if (id === speechId) {
-            stage.setSpeaking(false);
-            currentAudio = null;
-            if (currentAudioUrl) URL.revokeObjectURL(currentAudioUrl);
-            currentAudioUrl = null;
-          }
-          resolve();
-        };
-        const fallback = () => {
-          if (finished) return;
-          finished = true;
-          stage.setSpeaking(false);
-          currentAudio = null;
-          if (currentAudioUrl) URL.revokeObjectURL(currentAudioUrl);
-          currentAudioUrl = null;
-          if (id === speechId) {
-            chatError.textContent = 'Natural voice playback failed; using the browser voice instead.';
-            void speakWithBrowser(spokenText, id, onStarted).then(resolve);
-          } else {
-            resolve();
-          }
-        };
-        currentAudio.onended = finish;
-        currentAudio.onerror = fallback;
-        currentAudio.onplay = () => {
-          if (id === speechId) {
-            const durationMs = Number.isFinite(currentAudio.duration)
-              ? currentAudio.duration * 1000
-              : undefined;
-            onStarted(durationMs);
-            stage.setSpeaking(true);
-          }
-        };
-        stage.setSpeaking(true);
-        currentAudio.play().catch(fallback);
-      });
-    } catch (error) {
-      if (id !== speechId) return;
-      chatError.textContent = 'Natural voice is unavailable; using the browser voice instead.';
-    }
-  }
-  return speakWithBrowser(spokenText, id, onStarted);
-}
-
-async function speakWithBrowser(spokenText, id, onStarted) {
-  if (!('speechSynthesis' in window) || !('SpeechSynthesisUtterance' in window)) {
-    chatError.textContent = 'Spoken replies are not supported by this browser.';
-    onStarted();
-    return;
-  }
-  if (id !== speechId) return;
-  const utterance = new SpeechSynthesisUtterance(spokenText);
-  utterance.lang = lang === 'ur' ? 'ur-PK' : 'en-US';
-  utterance.pitch = 1.08;
-  utterance.rate = 0.9;
-  const voices = await getVoices();
-  if (id !== speechId) return;
-  const voice = femaleVoice(voices, lang === 'ur' ? 'ur' : 'en');
-  if (voice) utterance.voice = voice;
-  return new Promise(resolve => {
-    const finish = () => {
-      if (id === speechId) stage.setSpeaking(false);
-      resolve();
-    };
-    utterance.onstart = () => {
-      if (id === speechId) {
-        onStarted(spokenText.length / 14 * 1000);
-        stage.setSpeaking(true);
-      }
-    };
-    utterance.onend = finish;
-    utterance.onerror = event => {
-      finish();
-      if (id === speechId && !['canceled', 'interrupted'].includes(event.error)) {
-        chatError.textContent = 'The spoken reply could not be played.';
-      }
-    };
-    stage.setSpeaking(true);
-    speechSynthesis.speak(utterance);
-  });
-}
-
-chatForm.addEventListener('submit', async e => {
-  e.preventDefault();
-  const content = chatInput.value.trim();
-  if (!content) return;
-
-  chatError.textContent = '';
-  $('#chatStatus').textContent = 'Sending your message…';
-  chatInput.value = '';
-  chatHistory.push({ role: 'user', content });
-  const sendButton = $('#chatSend');
-  const sendLabel = $('#chatSendLabel');
-  const sendSpinner = $('#chatSendSpinner');
-  sendButton.setAttribute('aria-busy', 'true');
-  sendLabel.textContent = 'Sending';
-  sendSpinner.classList.remove('hidden');
-  sendButton.disabled = true;
-  chatInput.disabled = true;
-  try {
-    const response = await fetch('/api/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        messages: chatHistory.slice(-12),
-        context: chatContext,
-        language: lang,
-      }),
-    });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || 'The guide could not reply. Please try again.');
-
-    chatHistory.push({ role: 'assistant', content: data.reply });
-    if (chatHistory.length > 12) chatHistory.splice(0, chatHistory.length - 12);
-    $('#chatStatus').textContent = 'Message sent · reply received';
-    void bubble.say(data.reply);
-  } catch (err) {
-    const pendingMessage = chatHistory.at(-1);
-    if (pendingMessage?.role === 'user' && pendingMessage.content === content) chatHistory.pop();
-    chatInput.value = content;
-    $('#chatStatus').textContent = 'Message not sent';
-    chatError.textContent = err.message || 'The guide could not reply. Please try again.';
-  } finally {
-    sendButton.removeAttribute('aria-busy');
-    sendLabel.textContent = 'Send';
-    sendSpinner.classList.add('hidden');
-    sendButton.disabled = false;
-    chatInput.disabled = false;
-    chatInput.focus();
-  }
 });
 
 addEventListener('resize', () => {
@@ -447,20 +275,77 @@ addEventListener('resize', () => {
   if (running) stage.placeAtPx(view.slotX(currentIdx));
 });
 
+// ---------------- chat: character se sawal (LLM agent) ----------------
+const chatState = () => ({
+  sorted: session.data.sorted,
+  target: session.data.target,
+  steps: session.data.steps,
+  done: session.stepsDone,
+  found: session.data.found,
+  index: session.data.index,
+  phase: session.phase,
+});
+
+async function ask(text) {
+  if (!session || asking) return;
+  asking = true;
+  chat.setEnabled(false, M().ui.chatThinking);
+  chat.addLog('user', text);
+  chat.showYou(text);
+  if (llmProvider === 'mock' && !demoNoted) { chat.addLog('system', M().ui.demo); demoNoted = true; }
+
+  speech.cancel();
+  bubble.think();
+  stage.playOnce('think');                      // jawab aane tak soch wala gesture
+
+  let out;
+  try {
+    const res = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: text, history: chatHistory.slice(-10), state: chatState(), lang }),
+    });
+    out = await res.json();
+    if (!res.ok) throw new Error(out.error || res.statusText);
+  } catch (err) {
+    out = { reply: M().ui.chatError(err.message), actions: [] };
+  }
+
+  // agent ke actions: boxes highlight, character ko chalana, gesture
+  const walks = [];
+  for (const a of out.actions || []) {
+    if (a.type === 'highlight') view.pulse(a.indices);
+    else if (a.type === 'gesture') stage.playOnce(a.name);
+    else if (a.type === 'walk') {
+      currentIdx = a.index;
+      stage.lookAt(view.discPos(a.index));
+      walks.push(stage.walkTo(view.slotX(a.index)));
+    }
+  }
+  await Promise.all([bubble.say(out.reply), ...walks]);
+
+  chat.addLog('assistant', out.reply);
+  chatHistory.push({ role: 'user', text }, { role: 'assistant', text: out.reply });
+  asking = false;
+  chat.setEnabled(true, session && session.phase === 'finished' ? M().ui.chatEnd : M().ui.chatAsk);
+}
+
 // ---------------- main show ----------------
 async function run(data) {
   running = true;
-  chatContext = { phase: 'walkthrough', sorted: data.sorted, target: data.target };
-  const M = MESSAGES[lang];
+  session = { data, stepsDone: 0, phase: 'intro' };
   const { target: t, steps } = data;
   const n = data.sorted.length;
   const say = text => bubble.say(text);
 
+  chat.show();
+  chat.setEnabled(false, M().ui.chatWait);
+
   // 1) numbers sab taraf se aate hain -> shuffle -> sort
   view.build(data.original);
-  status(M.ui.arriving); await view.flyIn();
-  status(M.ui.shuffling); await view.shuffle();
-  status(M.ui.sorting);   await view.sort();
+  status(M().ui.arriving); await view.flyIn();
+  status(M().ui.shuffling); await view.shuffle();
+  status(M().ui.sorting);   await view.sort();
   view.showIndices();
   status(null);
   await sleep(400);
@@ -469,31 +354,21 @@ async function run(data) {
   currentIdx = Math.floor((n - 1) / 2);
   await stage.walkTo(view.slotX(currentIdx));
   stage.playOnce('wave');
-  await say(M.intro1(t));
-  await say(M.intro2());
+  await say(M().intro1(t));
+  await say(M().intro2());
   stage.playOnce('ack');
-  await say(M.intro3());
-  await waitNext(M.ui.hintStart);                   // presenter ready ho to ↓
+  await say(M().intro3());
+  await waitNext(M().ui.hintStart);                 // presenter ready ho to ↓
 
   // 3) binary search: har step character khud karta hai
+  session.phase = 'between_steps';
   let low = 0, high = n - 1;
   for (const [idx, s] of steps.entries()) {
     const isLast = idx === steps.length - 1;
-    chatContext = {
-      phase: 'walkthrough',
-      sorted: data.sorted,
-      target: data.target,
-      step: s.step,
-      low: s.low,
-      high: s.high,
-      mid: s.mid,
-      value: s.value,
-      result: s.result,
-    };
     view.setPointers({ low: s.low, high: s.high });
     const walk = stage.walkTo(view.slotX(s.mid));
     currentIdx = s.mid;
-    const lineA = say(M.stepA(s.step, s.low, s.high, s.mid));
+    const lineA = say(M().stepA(s.step, s.low, s.high, s.mid));
     sleep(900).then(() => view.setPointers({ low: s.low, high: s.high, mid: s.mid }));
     await Promise.all([lineA, walk]);
 
@@ -501,22 +376,26 @@ async function run(data) {
     stage.lookAt(view.discPos(s.mid));
 
     if (s.result === 'found') {
-      await say(M.foundAt(s.mid, s.value, t));
-      await waitNext(M.ui.hintResult);
+      await say(M().foundAt(s.mid, s.value, t));
+      session.stepsDone = idx + 1;
+      await waitNext(M().ui.hintResult);
       break;
     }
 
     stage.playOnce('think');
-    await say(s.result === 'right' ? M.right(s.mid, s.value, t) : M.left(s.mid, s.value, t));
+    await say(s.result === 'right' ? M().right(s.mid, s.value, t) : M().left(s.mid, s.value, t));
 
     stage.playOnce('dismiss');
-    if (s.result === 'right') { view.dim(0, s.mid); low = s.mid + 1; high = s.high; await say(M.discard(0, s.mid)); }
-    else                      { view.dim(s.mid, n - 1); high = s.mid - 1; low = s.low; await say(M.discard(s.mid, n - 1)); }
+    if (s.result === 'right') { view.dim(0, s.mid); low = s.mid + 1; high = s.high; await say(M().discard(0, s.mid)); }
+    else                      { view.dim(s.mid, n - 1); high = s.mid - 1; low = s.low; await say(M().discard(s.mid, n - 1)); }
     view.setMid(null);
-    await waitNext(isLast ? M.ui.hintResult : M.ui.hintNext);   // har step ke baad ↓ ka intezar
+    session.stepsDone = idx + 1;
+    await waitNext(isLast ? M().ui.hintResult : M().ui.hintNext);   // har step ke baad ↓ ka intezar
   }
 
   // 4) result
+  session.phase = 'result';
+  chat.setEnabled(false, M().ui.chatWait);
   view.hidePointers();
   if (data.found) {
     const i = data.index;
@@ -524,34 +403,28 @@ async function run(data) {
     const feet = stage.feetPx();
     view.drop(i, feet.x + 6, feet.y - 20);          // disc shelf se utar kar character ke saamne aata hai
     const pickup = stage.playOnce('pickup');
-    const line = say(M.pickup());
+    const line = say(M().pickup());
     await rawSleep(PICK_TIME * 1000 / SPEED);       // jab haath neeche pahunchta hai
     view.follow(i, () => stage.handPx());           // disc haath ke saath uthta hai
     await Promise.all([pickup, line]);
     const hp = stage.headPx();
     view.hold(i, hp.x, hp.y - 80);                  // sar ke upar "trophy"
     stage.startLoop('hiphop');                      // jeet ka dance
-    await say(M.foundDone(t, i, data.comparisons, n));
-    await say(M.bigO());
-    await say(M.end());
+    await say(M().foundDone(t, i, data.comparisons, n));
+    await say(M().bigO());
+    await say(M().end());
     stage.stopLoop();
   } else {
     stage.playOnce('shake');
-    await say(M.empty(low, high));
+    await say(M().empty(low, high));
     stage.playOnce('sigh');
-    await say(M.notFound(t));
-    await say(M.end());
+    await say(M().notFound(t));
+    await say(M().end());
   }
 
   stage.lookAt(null);                       // ab sirf mouse follow hoga
-  running = false;
-  chatContext = {
-    phase: 'completed',
-    sorted: data.sorted,
-    target: data.target,
-    step: steps.length,
-    result: data.found ? 'found' : undefined,
-  };
+  session.phase = 'finished';
+  chat.setEnabled(true, M().ui.chatEnd);    // ab idle mein bhi sawal pooch sakte hain
   $('#again').classList.remove('hidden');
 }
 

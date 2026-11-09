@@ -19,8 +19,7 @@
   }
   </script>
 </head>
-<body data-model="{{ url_for('static', filename='models/character.glb') }}"
-      data-natural-voice="{{ 'true' if natural_voice_enabled else 'false' }}">
+<body data-model="{{ url_for('static', filename='models/character.glb') }}" data-models-base="{{ url_for('static', filename='models/') }}" data-audio-base="{{ url_for('static', filename='audio/') }}">
 
   <!-- 1) Preloader -->
   <div id="preloader">
@@ -37,46 +36,57 @@
 
   <div id="status" class="chip hidden"></div>
 
-  <!-- Presentation ke liye: har step ke baad Down Arrow dabane ka intezar -->
-  <div id="mode" class="pillbar" aria-label="Step mode">
-    <span>Steps</span>
-    <button data-m="manual" class="on">Manual ↓</button>
-    <button data-m="auto">Auto</button>
+  <!-- Upar ke controls (phone par do line mein wrap hote hain) -->
+  <div id="tools">
+    <div class="tcol">
+      <div id="mode" class="pillbar" aria-label="Step mode">
+        <span>Steps</span>
+        <button data-m="manual" class="on">Manual <b class="k">↓</b></button>
+        <button data-m="auto">Auto</button>
+      </div>
+      <div id="voice" class="pillbar" aria-label="Voice">
+        <span>Voice</span>
+        <button data-v="on" class="on">On</button>
+        <button data-v="off">Off</button>
+      </div>
+      <div id="music" class="pillbar" aria-label="Background music">
+        <span>Music</span>
+        <button data-mu="on">On</button>
+        <button data-mu="off" class="on">Off</button>
+      </div>
+    </div>
+    <div class="tcol tr">
+      <div id="speed" class="pillbar" aria-label="Speed">
+        <span>Speed</span>
+        <button data-s="1" class="on">1×</button>
+        <button data-s="1.5">1.5×</button>
+        <button data-s="2">2×</button>
+      </div>
+      <button id="logBtn" class="pillbtn hidden" type="button">Chat log</button>
+    </div>
   </div>
 
   <button id="hint" class="hint hidden" type="button"></button>
 
-  <div id="speed" class="pillbar" aria-label="Speed">
-    <span>Speed</span>
-    <button data-s="1" class="on">1×</button>
-    <button data-s="1.5">1.5×</button>
-    <button data-s="2">2×</button>
-  </div>
+  <!-- Conversation log -->
+  <aside id="log" class="log hidden" aria-label="Conversation">
+    <header><b>Conversation</b><button id="logClose" type="button" aria-label="Close">×</button></header>
+    <div id="logBody"></div>
+  </aside>
 
-  <div id="musicControls" class="music-controls" aria-label="Background music">
-    <button id="chooseMusic" type="button">Choose music</button>
-    <button id="musicToggle" type="button" aria-pressed="false">Unmute music</button>
-    <input id="musicFile" class="sr-only" type="file" accept="audio/*" aria-label="Choose an audio file">
-    <audio id="backgroundMusic" src="{{ url_for('static', filename='audio/background-music.mp3') }}" loop preload="none"></audio>
-    <span id="musicStatus" role="status" aria-live="polite">Default track is muted · unmute to listen.</span>
-  </div>
+  <!-- Character se baat: sawal poochne ka bar -->
+  <div id="you" class="you hidden"></div>
+  <form id="chat" class="chatbar off hidden" autocomplete="off">
+    <input id="chatInput" type="text" maxlength="400" placeholder="" disabled>
+    <button id="micBtn" type="button" title="Speak (mic)" aria-label="Speak">
+      <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M12 15a3.5 3.5 0 0 0 3.5-3.5v-6a3.5 3.5 0 0 0-7 0v6A3.5 3.5 0 0 0 12 15Zm6-3.5a1 1 0 1 0-2 0 4 4 0 0 1-8 0 1 1 0 1 0-2 0 6 6 0 0 0 5 5.9V20H9.5a1 1 0 1 0 0 2h5a1 1 0 1 0 0-2H13v-2.6a6 6 0 0 0 5-5.9Z"/></svg>
+    </button>
+    <button id="sendBtn" type="submit" disabled>Send</button>
+  </form>
 
   <!-- Character ka speech bubble -->
   <div id="bubble" class="bubble hidden" data-side="right">
     <p><span class="typed"></span><span class="rest"></span></p>
-  </div>
-
-  <div class="chat-widget">
-    <p id="chatError" class="chat-error" role="alert"></p>
-    <form id="chatForm" class="chat-form" aria-label="Send a message to the guide">
-      <label class="sr-only" for="chatInput">Message the guide</label>
-      <input id="chatInput" type="text" maxlength="1200" placeholder="Ask the guide…" autocomplete="off" required>
-      <button id="chatSend" class="btn" type="submit">
-        <span id="chatSendSpinner" class="send-spinner hidden" aria-hidden="true"></span>
-        <span id="chatSendLabel">Send</span>
-      </button>
-    </form>
-    <p id="chatStatus" class="chat-status" role="status" aria-live="polite"></p>
   </div>
 
   <button id="again" class="btn hidden" type="button">Search again</button>
@@ -99,6 +109,18 @@
         <option value="ur">Roman Urdu</option>
       </select>
 
+      <label for="voiceInput">Guide's voice <small>(optional, depends on your browser)</small></label>
+      <select id="voiceInput"><option value="">Automatic</option></select>
+
+      <label for="charInput">Guide's character</label>
+      <select id="charInput">
+        <option value="original">Original</option>
+        <option value="knight">Knight</option>
+        <option value="arissa">Arissa</option>
+        <option value="boy">Boy</option>
+      </select>
+
+      <div id="toneBox">
       <label>Guide's skin tone</label>
       <div class="tones" role="radiogroup" aria-label="Skin tone">
         <label class="tone"><input type="radio" name="tone" value="original" checked><span style="--c:#8a5a3c"></span><em>Original</em></label>
@@ -106,6 +128,7 @@
         <label class="tone"><input type="radio" name="tone" value="wheatish"><span style="--c:#dfae80"></span><em>Wheatish</em></label>
         <label class="tone"><input type="radio" name="tone" value="tan"><span style="--c:#b87f56"></span><em>Tan</em></label>
         <label class="tone"><input type="radio" name="tone" value="deep"><span style="--c:#6b4129"></span><em>Deep</em></label>
+      </div>
       </div>
 
       <p id="formError" class="error" role="alert"></p>

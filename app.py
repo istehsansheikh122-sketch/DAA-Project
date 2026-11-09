@@ -4,18 +4,21 @@ Frontend (character + animations) sirf *dikhata* hai.
 Asal binary search ke steps yahan Python mein calculate hote hain
 aur /api/solve JSON mein wapas jate hain.
 """
-import os
+import time
+from collections import defaultdict, deque
 
-from flask import Flask, Response, jsonify, render_template, request
-from chat_agent import ChatAgentError, generate_reply, generate_speech
+from flask import Flask, jsonify, render_template, request
+
+import llm
+
+llm.load_env_file()          # .env file ho to API keys wahan se parh lo
+print(llm.describe())        # terminal mein dikhata hai ke key mili ya demo mode
 
 app = Flask(__name__)
 
 MIN_ITEMS = 2
 MAX_ITEMS = 15          # screen par saaf dikhne ki limit
 MAX_ABS_VALUE = 9999
-MAX_CHAT_MESSAGES = 12
-MAX_CHAT_MESSAGE_LENGTH = 1200
 
 
 def binary_search_steps(arr, target):
@@ -70,12 +73,42 @@ def parse_ints(raw, field):
 
 @app.get("/")
 def index():
-    return render_template(
-        "index.html",
-        max_items=MAX_ITEMS,
-        min_items=MIN_ITEMS,
-        natural_voice_enabled=bool(os.getenv("OPENAI_API_KEY", "").strip()),
-    )
+    return render_template("index.html", max_items=MAX_ITEMS, min_items=MIN_ITEMS)
+
+
+@app.get("/api/config")
+def config():
+    """Browser ko batata hai ke LLM real hai ya demo mode."""
+    return jsonify(provider=llm.provider(), model=llm.model_name(), env_file=llm.ENV_STATUS["file"])
+
+
+# ---- chat (LLM agent) ----
+RATE_LIMIT = 20           # ek IP se 1 minute mein itne messages
+_hits = defaultdict(deque)
+
+
+def _rate_limited(ip):
+    now = time.time()
+    q = _hits[ip]
+    while q and now - q[0] > 60:
+        q.popleft()
+    if len(q) >= RATE_LIMIT:
+        return True
+    q.append(now)
+    return False
+
+
+@app.post("/api/chat")
+def chat():
+    if _rate_limited(request.remote_addr or "?"):
+        return jsonify(error="Bohat zyada messages. Thodi der baad try karein."), 429
+    data = request.get_json(silent=True) or {}
+    try:
+        reply, actions = llm.run_agent(
+            data.get("message"), data.get("history"), data.get("state"), data.get("lang"))
+    except llm.LLMError as exc:
+        return jsonify(error=str(exc)), 502
+    return jsonify(reply=reply, actions=actions, provider=llm.provider())
 
 
 @app.post("/api/solve")
@@ -115,66 +148,5 @@ def solve():
     )
 
 
-@app.post("/api/chat")
-def chat():
-    data = request.get_json(silent=True)
-    if not isinstance(data, dict):
-        return jsonify(error="Chat request JSON is required."), 400
-
-    messages = data.get("messages")
-    if not isinstance(messages, list) or not 1 <= len(messages) <= MAX_CHAT_MESSAGES:
-        return jsonify(error=f"Send between 1 and {MAX_CHAT_MESSAGES} chat messages."), 400
-
-    clean_messages = []
-    for message in messages:
-        if not isinstance(message, dict):
-            return jsonify(error="Chat messages must have a user or assistant role."), 400
-        role = message.get("role")
-        if not isinstance(role, str) or role not in {"user", "assistant"}:
-            return jsonify(error="Chat messages must have a user or assistant role."), 400
-        content = message.get("content")
-        if not isinstance(content, str) or not content.strip() or len(content) > MAX_CHAT_MESSAGE_LENGTH:
-            return jsonify(error=f"Each chat message must contain 1 to {MAX_CHAT_MESSAGE_LENGTH} characters."), 400
-        clean_messages.append({"role": role, "content": content.strip()})
-
-    if clean_messages[-1]["role"] != "user":
-        return jsonify(error="The latest chat message must be from the user."), 400
-
-    language = data.get("language", "en")
-    if not isinstance(language, str) or language not in {"en", "ur"}:
-        return jsonify(error="Choose English or Roman Urdu for the guide."), 400
-
-    try:
-        reply = generate_reply(clean_messages, data.get("context"), language)
-    except ChatAgentError as exc:
-        return jsonify(error=str(exc)), exc.status_code
-
-    return jsonify(reply=reply)
-
-
-@app.post("/api/speak")
-def speak():
-    data = request.get_json(silent=True)
-    if not isinstance(data, dict):
-        return jsonify(error="Speech request JSON is required."), 400
-    text = data.get("text")
-    if not isinstance(text, str) or not text.strip() or len(text) > 1200:
-        return jsonify(error="Speech text must contain 1 to 1200 characters."), 400
-    language = data.get("language", "en")
-    if not isinstance(language, str) or language not in {"en", "ur"}:
-        return jsonify(error="Choose English or Roman Urdu for the guide."), 400
-    try:
-        audio = generate_speech(text.strip(), language)
-    except ChatAgentError as exc:
-        return jsonify(error=str(exc)), exc.status_code
-    response = Response(audio, mimetype="audio/mpeg")
-    response.headers["Cache-Control"] = "no-store"
-    return response
-
-
 if __name__ == "__main__":
-    app.run(
-        host="0.0.0.0",
-        port=int(os.environ.get("PORT", "5000")),
-        debug=False,
-    )
+    app.run(debug=True, port=5000)
