@@ -7,8 +7,7 @@ Character ke chat ke peeche ek chhota "agent" hai:
   * Server tools chalata hai, aur aakhir mein {reply, actions} browser ko bhejta hai.
 
 Providers (koi extra package nahi, sirf Python ka urllib):
-  * OpenRouter  -> OPENROUTER_API_KEY + OPENROUTER_BASE_URL for /chat/completions
-  * anthropic  -> OPENROUTER_API_KEY (Anthropic-compatible /v1/messages API)
+  * anthropic  -> OPENROUTER_API_KEY (Claude)
   * openai     -> OPENAI_API_KEY (+ OPENAI_BASE_URL: OpenAI, Gemini, Groq, Ollama... jo bhi
                   OpenAI-compatible ho)
   * mock       -> koi key na ho to demo mode (built-in simple jawab)
@@ -17,7 +16,6 @@ import json
 import os
 import re
 import urllib.error
-from urllib.parse import urlsplit
 import urllib.request
 
 MAX_AGENT_STEPS = 4
@@ -100,18 +98,10 @@ def provider():
     if name in {"anthropic", "openai", "mock"}:
         return name
     if os.getenv("OPENROUTER_API_KEY"):
-        return "openai" if _openrouter_uses_chat_completions() else "anthropic"
+        return "anthropic"
     if os.getenv("OPENAI_API_KEY"):
         return "openai"
     return "mock"
-
-
-def _openrouter_uses_chat_completions():
-    base = os.getenv("OPENROUTER_BASE_URL", "").rstrip("/")
-    return bool(os.getenv("OPENROUTER_API_KEY")) and (
-        base.lower().endswith("/chat/completions")
-        or urlsplit(base).hostname == "openrouter.ai"
-    )
 
 
 def model_name():
@@ -119,8 +109,6 @@ def model_name():
     if prov == "anthropic":
         return os.getenv("OPENROUTER_MODEL", "claude-haiku-5-5")
     if prov == "openai":
-        if _openrouter_uses_chat_completions() and not os.getenv("OPENAI_MODEL"):
-            return os.getenv("OPENROUTER_MODEL", "openrouter/free")
         return os.getenv("OPENAI_MODEL", "gpt-4o-mini")
     return "demo"
 
@@ -241,13 +229,18 @@ def sanitize_state(raw):
     }
 
 
-def build_system_prompt(state, lang):
+def build_system_prompt(state, lang, name="Guide", gender="f"):
     if lang == "ur":
-        language = ("Roman Urdu (Urdu angrezi huroof mein, jaise 'main dhoondti hoon'). Tum female ho, "
-                    "isliye female verb forms use karo. Agar user Urdu script mein likhe tab bhi jawab Roman Urdu mein do.")
+        verbs = ("female ho, isliye female verb forms use karo (jaise 'main dhoondti hoon')" if gender == "f"
+                 else "male ho, isliye male verb forms use karo (jaise 'main dhoondta hoon')")
+        language = (f"Roman Urdu (Urdu angrezi huroof mein). Tum {verbs}. "
+                    "Agar user Urdu script mein likhe tab bhi jawab Roman Urdu mein do.")
     else:
         language = "simple, friendly English."
-    return f"""You are the friendly on-screen guide character of a "Binary Search" teaching demo.
+    who = {"f": "a young woman", "m": "a man", "b": "a boy"}.get(gender, "a friendly guide")
+    return f"""You are {name}, {who}: the friendly on-screen guide character of a "Binary Search" teaching demo.
+YOUR NAME is {name}. If the student asks your name or who you are, answer that you are {name}, their binary search guide.
+Stay in this character (never say you are an AI model or mention any model/company name).
 A student is watching you find a number in a sorted array using binary search. You already
 explained the steps out loud; now the student is asking you questions.
 
@@ -351,13 +344,9 @@ class AnthropicAdapter:
 
 class OpenAIAdapter:
     def __init__(self):
-        if _openrouter_uses_chat_completions():
-            self.key = os.environ.get("OPENROUTER_API_KEY", "")
-            base = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").rstrip("/")
-        else:
-            self.key = os.environ.get("OPENAI_API_KEY", "")
-            base = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
-        self.url = base if base.lower().endswith("/chat/completions") else base + "/chat/completions"
+        self.key = os.environ.get("OPENAI_API_KEY", "")
+        base = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
+        self.url = base + "/chat/completions"
         self.tools = [
             {"type": "function", "function": {
                 "name": t["name"], "description": t["description"], "parameters": t["input_schema"]}}
@@ -403,7 +392,7 @@ def _recap_step(state):
     return steps[state["done"] - 1] if state["done"] > 0 else steps[0]
 
 
-def mock_reply(message, state, lang, actions):
+def mock_reply(message, state, lang, actions, name="Guide"):
     """Key na ho to simple rule-based jawab (taake demo phir bhi chale)."""
     ur = lang == "ur"
     m = message.lower()
@@ -415,6 +404,9 @@ def mock_reply(message, state, lang, actions):
 
     def has(*words):
         return any(w in m for w in words)
+
+    if has("your name", "who are you", "naam kya", "tumhara naam", "aapka naam", "aap ka naam", "tumhaara naam", "kaun ho", "kon ho"):
+        return pick(f"I'm {name}, your binary search guide!", f"Mera naam {name} hai, main aap ki binary search guide hoon!")
 
     if step and has("mid", "middle", "darmiyan", "centre", "center", "kaise nikal", "kese nikal"):
         low, high, mid, val = step["low"], step["high"], step["mid"], step["value"]
@@ -473,7 +465,7 @@ def mock_reply(message, state, lang, actions):
 
 
 # ----------------------------------------------------------------- agent loop
-def run_agent(message, history, raw_state, lang):
+def run_agent(message, history, raw_state, lang, name="Guide", gender="f"):
     """Return (reply_text, actions)."""
     message = str(message or "").strip()[:MAX_MSG_CHARS]
     if not message:
@@ -484,10 +476,10 @@ def run_agent(message, history, raw_state, lang):
 
     prov = provider()
     if prov == "mock":
-        return mock_reply(message, state, lang, actions), actions
+        return mock_reply(message, state, lang, actions, name), actions
 
     adapter = AnthropicAdapter() if prov == "anthropic" else OpenAIAdapter()
-    conv = adapter.init(build_system_prompt(state, lang), history, message)
+    conv = adapter.init(build_system_prompt(state, lang, name, gender), history, message)
     texts = []
     for _ in range(MAX_AGENT_STEPS):
         text, calls = adapter.step(conv)

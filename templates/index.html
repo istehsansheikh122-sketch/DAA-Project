@@ -114,10 +114,9 @@
 
       <label for="charInput">Guide's character</label>
       <select id="charInput">
-        <option value="original">Original</option>
-        <option value="knight">Knight</option>
-        <option value="arissa">Arissa</option>
-        <option value="boy">Boy</option>
+        {% for cid, cname, cgender in characters %}
+        <option value="{{ cid }}" data-gender="{{ cgender }}">{{ cname }}</option>
+        {% endfor %}
       </select>
 
       <div id="toneBox">

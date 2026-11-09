@@ -1,7 +1,7 @@
 import { createStage, PICK_TIME } from './stage.js';
 import { ArrayView } from './array-view.js';
 import { Bubble } from './bubble.js';
-import { MESSAGES } from './i18n.js';
+import { MESSAGES, MALE_UR } from './i18n.js';
 import { Speech, Listener } from './speech.js';
 import { Chat } from './chat.js';
 import { Music } from './music.js';
@@ -54,7 +54,9 @@ let session = null;          // chal rahi search ki state (chat ko context dene 
 let asking = false;          // character abhi kisi sawal ka jawab de raha hai
 let demoNoted = false;
 const chatHistory = [];
-const M = () => MESSAGES[lang];
+const charName = () => $('#charInput').selectedOptions[0].textContent.trim();
+const charGender = () => $('#charInput').selectedOptions[0].dataset.gender || 'f';
+const M = () => (lang === 'ur' && charGender() !== 'f' ? MALE_UR : MESSAGES[lang]);
 
 const chat = new Chat({ onSubmit: text => ask(text), listener, getLang: () => lang });
 
@@ -162,8 +164,9 @@ $('#langInput').addEventListener('change', fillVoices);
 // ---------------- character select (form) ----------------
 const charSel = $('#charInput');
 { const saved = store.get('bsg.char'); if (saved && CHARACTERS[saved]) charSel.value = saved; }
+speech.gender = charGender();
 function syncToneBox() { $('#toneBox').style.display = CHARACTERS[charSel.value].tone ? '' : 'none'; }
-charSel.addEventListener('change', syncToneBox);
+charSel.addEventListener('change', () => { syncToneBox(); speech.gender = charGender(); fillVoices(); });
 syncToneBox();
 
 // ---------------- preloader ----------------
@@ -232,6 +235,7 @@ form.addEventListener('submit', async e => {
     if (!res.ok) { errBox.textContent = data.error || 'Kuch galat ho gaya.'; return; }
     lang = $('#langInput').value;
     speech.lang = lang;
+    speech.gender = charGender();
     speech.voiceURI = $('#voiceInput').value;
     store.set('bsg.voiceURI.' + lang, speech.voiceURI);
     store.set('bsg.char', charSel.value);
@@ -303,7 +307,7 @@ async function ask(text) {
     const res = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: text, history: chatHistory.slice(-10), state: chatState(), lang }),
+      body: JSON.stringify({ message: text, history: chatHistory.slice(-10), state: chatState(), lang, character: charSel.value }),
     });
     out = await res.json();
     if (!res.ok) throw new Error(out.error || res.statusText);
@@ -354,7 +358,7 @@ async function run(data) {
   currentIdx = Math.floor((n - 1) / 2);
   await stage.walkTo(view.slotX(currentIdx));
   stage.playOnce('wave');
-  await say(M().intro1(t));
+  await say(M().intro1(t, charName()));
   await say(M().intro2());
   stage.playOnce('ack');
   await say(M().intro3());

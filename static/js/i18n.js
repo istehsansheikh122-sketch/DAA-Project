@@ -21,7 +21,7 @@ export const MESSAGES = {
       demo: 'Demo mode: no LLM key found, so I answer with a few built-in replies. Add OPENROUTER_API_KEY (see README) for the real agent.',
       newSearch: 'New search',
     },
-    intro1: t => `Hi! I'm your guide. Watch me find ${t} using binary search.`,
+    intro1: (t, name) => `Hi! I'm ${name}, your guide. Watch me find ${t} using binary search.`,
     intro2: () => `Binary search only works on a sorted list, and your numbers are sorted now.`,
     intro3: () => `The idea: check the middle number, then throw away the half that can't contain the answer. Repeat!`,
     stepA: (k, low, high, mid) =>
@@ -57,7 +57,7 @@ export const MESSAGES = {
       demo: 'Demo mode: LLM key nahi mili, is liye main kuch built-in jawab deti hoon. Asli agent ke liye OPENROUTER_API_KEY lagayein (README dekhein).',
       newSearch: 'Nayi search',
     },
-    intro1: t => `Hi! Main aap ki guide hoon. Dekhiye, main binary search se ${t} kaise dhoondti hoon.`,
+    intro1: (t, name) => `Hi! Main ${name} hoon, aap ki guide. Dekhiye, main binary search se ${t} kaise dhoondti hoon.`,
     intro2: () => `Binary search sirf sorted list par chalti hai, aur aap ke numbers ab sorted ho chuke hain.`,
     intro3: () => `Tareeqa ye hai: darmiyan wala number dekho, phir wo aadha hissa phenk do jis mein jawab ho hi nahi sakta. Ye dohrate jao!`,
     stepA: (k, low, high, mid) =>
@@ -76,3 +76,17 @@ export const MESSAGES = {
     end: () => `Ek aur try karna hai? "Search again" dabayein.`,
   },
 };
+
+// Male / ladka character ke liye Roman Urdu ke verb forms (sakti -> sakta, rahi -> raha ...)
+const MALE_SWAPS = [
+  [/sakti hoon/g, 'sakta hoon'], [/dhoondti/g, 'dhoondta'], [/rahi hoon/g, 'raha hoon'],
+  [/leti hoon/g, 'leta hoon'], [/deti hoon/g, 'deta hoon'], [/pahunch saki/g, 'pahunch saka'],
+  [/bula rahi/g, 'bula raha'], [/aap ki guide/g, 'aap ka guide'],
+];
+const maleify = x => {
+  if (typeof x === 'string') return MALE_SWAPS.reduce((s, [re, to]) => s.replace(re, to), x);
+  if (typeof x === 'function') return (...a) => maleify(x(...a));
+  if (x && typeof x === 'object') return Object.fromEntries(Object.entries(x).map(([k, v]) => [k, maleify(v)]));
+  return x;
+};
+export const MALE_UR = maleify(MESSAGES.ur);

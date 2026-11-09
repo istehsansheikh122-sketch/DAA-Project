@@ -71,9 +71,20 @@ def parse_ints(raw, field):
         raise ValueError(f"'{field}' mein sirf poore numbers (integers) allowed hain.")
 
 
+# Har character ka naam aur jins (f = larki / aurat, m = mard, b = ladka). Naam yahan badlein.
+CHARACTER_NAMES = {
+    "original": "Fairy Tale",
+    "knight": "Bram",
+    "arissa": "Nova",
+    "boy": "Finn",
+}
+CHARACTER_GENDER = {"original": "f", "knight": "m", "arissa": "f", "boy": "b"}
+
+
 @app.get("/")
 def index():
-    return render_template("index.html", max_items=MAX_ITEMS, min_items=MIN_ITEMS)
+    characters = [(cid, name, CHARACTER_GENDER.get(cid, "f")) for cid, name in CHARACTER_NAMES.items()]
+    return render_template("index.html", max_items=MAX_ITEMS, min_items=MIN_ITEMS, characters=characters)
 
 
 @app.get("/api/config")
@@ -104,8 +115,10 @@ def chat():
         return jsonify(error="Bohat zyada messages. Thodi der baad try karein."), 429
     data = request.get_json(silent=True) or {}
     try:
+        cid = str(data.get("character") or "original").lower()
         reply, actions = llm.run_agent(
-            data.get("message"), data.get("history"), data.get("state"), data.get("lang"))
+            data.get("message"), data.get("history"), data.get("state"), data.get("lang"),
+            name=CHARACTER_NAMES.get(cid, "Guide"), gender=CHARACTER_GENDER.get(cid, "f"))
     except llm.LLMError as exc:
         return jsonify(error=str(exc)), 502
     return jsonify(reply=reply, actions=actions, provider=llm.provider())

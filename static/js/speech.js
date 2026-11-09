@@ -6,6 +6,7 @@ const LANG_PREFS = {
   en: ['en-US', 'en-GB', 'en-IN', 'en-AU', 'en'],
   ur: ['ur-PK', 'ur-IN', 'ur', 'hi-IN', 'hi', 'en-IN'],
 };
+const MALE = /\b(male|david|mark|guy|ryan|james|george|alex|daniel|fred|tom|thomas|christopher|eric|brian|roger|steffan|connor|liam|william|oliver|ravi|hemant|prabhat|asad|salman|madhur|rishi|arthur|aaron|gordon|rocko|reed|eddy|lee)\b/i;
 const FEMALE = /female|zira|aria|jenny|samantha|susan|hazel|heera|uzma|kalpana|swara|sonia|libby|natasha|ava|emma|allison|karen|moira|tessa|veena|catherine|neerja|salman?a/i;
 
 export class Speech {
@@ -15,6 +16,7 @@ export class Speech {
     this.voiceURI = '';
     this.rate = 1;
     this.lang = 'en';
+    this.gender = 'f';               // 'f' larki, 'm' mard, 'b' ladka (character ke hisaab se)
     this.onBoundary = null;          // har lafz par callback (agar voice support kare)
   }
 
@@ -25,6 +27,23 @@ export class Speech {
       const t = setTimeout(resolve, 1500);
       speechSynthesis.addEventListener('voiceschanged', () => { clearTimeout(t); resolve(); }, { once: true });
     });
+  }
+
+  // naam se andaza: awaaz female hai ya male ('?' = pata nahi)
+  guess(v) { return /female/i.test(v.name) || FEMALE.test(v.name) ? 'f' : MALE.test(v.name) ? 'm' : '?'; }
+
+  // character ke jins se awaaz kitni milti hai (0 = behtareen)
+  genderRank(v) {
+    const g = this.guess(v), want = this.gender === 'f' ? 'f' : 'm';
+    return g === want ? 0 : g === '?' ? 1 : 2;
+  }
+
+  // pitch: mard thodi bhari, ladka thodi patli (bachon jaisi), larki normal. Agar awaaz ka jins match na ho to pitch se kaam chalao.
+  pitchFor(v) {
+    const g = v ? this.guess(v) : '?';
+    if (this.gender === 'f') return g === 'm' ? 1.35 : 1.05;
+    if (this.gender === 'm') return g === 'f' ? 0.7 : g === 'm' ? 0.95 : 0.85;
+    return g === 'f' ? 1.0 : g === 'm' ? 1.25 : 1.15;      // ladka
   }
 
   voices() { return this.supported ? speechSynthesis.getVoices() : []; }
@@ -40,7 +59,7 @@ export class Speech {
     const matching = all.filter(x => x.r < 99);
     const pool = matching.length ? matching : all;
     return pool
-      .sort((a, b) => (a.r - b.r) || (FEMALE.test(b.v.name) - FEMALE.test(a.v.name)) || (b.v.localService - a.v.localService))
+      .sort((a, b) => (a.r - b.r) || (this.genderRank(a.v) - this.genderRank(b.v)) || (b.v.localService - a.v.localService))
       .map(x => x.v);
   }
 
@@ -57,7 +76,7 @@ export class Speech {
         const v = this.voices().find(x => x.voiceURI === this.voiceURI) || this.best(this.lang);
         if (v) { u.voice = v; u.lang = v.lang; } else { u.lang = this.lang === 'ur' ? 'ur-PK' : 'en-US'; }
         u.rate = this.rate;
-        u.pitch = 1.05;
+        u.pitch = this.pitchFor(v);
         let done = false;
         const finish = () => { if (done) return; done = true; clearTimeout(timer); resolve(); };
         u.onend = finish;
