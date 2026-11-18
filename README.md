@@ -69,24 +69,22 @@ Jis character mein standard Mixamo bones (`mixamorig:Hips`, `Spine`, `LeftArm` .
 
 ### API key lagana
 
-`.env.example` ko `.env` naam se copy karein aur ek provider ki key bharein:
+`.env.example` ko `.env` naam se copy karein aur OpenRouter key bharein:
 
 | Variable | Matlab |
 |---|---|
-| `OPENROUTER_API_KEY` | OpenRouter key ya Anthropic-compatible API key |
-| `OPENROUTER_MODEL` | model ka naam (OpenRouter default `openrouter/free`; Anthropic default `claude-haiku-5-5`) |
-| `OPENROUTER_BASE_URL` | OpenRouter URL (`https://openrouter.ai/api/v1` ya full `/chat/completions` URL), ya Anthropic-compatible API ka base URL |
-| `OPENAI_API_KEY`, `OPENAI_MODEL`, `OPENAI_BASE_URL` | OpenAI ya koi OpenAI-compatible service (Groq, OpenRouter, local) |
-| `LLM_PROVIDER` | `anthropic`, `openai` ya `mock` (zabardasti choose karne ke liye) |
+| `OPENROUTER_API_KEY` | OpenRouter API key |
+| `OPENROUTER_MODEL` | OpenRouter model ID (default `openrouter/free`) |
+| `OPENROUTER_BASE_URL` | OpenRouter API base URL (default `https://openrouter.ai/api/v1`); normally leave unchanged |
 
-OpenRouter ka base URL agar `openrouter.ai` par ho ya `/chat/completions` par khatam ho, to app OpenAI-compatible API format, Bearer authentication, aur `OPENROUTER_MODEL` use karti hai. Doosre `OPENROUTER_BASE_URL` values Anthropic-compatible `/v1/messages` API ke liye hain.
+OpenRouter requests OpenAI-compatible Chat Completions format aur Bearer authentication use karti hain. OpenRouter key na ho to app built-in demo replies dikhati hai.
 
 **Agar abhi bhi demo mode dikhe:**
 1. File ka naam bilkul `.env` hona chahiye (Windows mein aksar `.env.txt` ban jata hai: File Explorer mein View, Show, File name extensions on karke dekhein).
 2. `.env` `app.py` ke saath usi folder mein ho.
 3. Line aise ho: `OPENROUTER_API_KEY=your-api-key` (khali value ya `#` se shuru line ignore hoti hai).
 4. `.env` badalne ke baad server band karke dobara `python app.py` chalayein.
-5. Server shuru hote hi terminal mein ek line aati hai: `LLM: anthropic / ...` (key mili) ya `LLM: DEMO MODE ...` ke saath wajah. Browser mein `http://127.0.0.1:5000/api/config` bhi provider batata hai.
+5. Server shuru hote hi terminal mein `LLM: OpenRouter / ...` (key mili) ya `LLM: DEMO MODE ...` ke saath wajah dikhai deti hai. Browser mein `http://127.0.0.1:5000/api/config` bhi status batata hai.
 
 Model ka naam aapke account mein jo model mojood ho wahi likhein. Agar `/api/chat` 502 de to server ke terminal mein error dekhein (aksar galat key ya model naam).
 
@@ -103,7 +101,7 @@ Ye tests ek nakli LLM server se agent loop, tools, rate limit aur mock mode chec
 | File | Kaam |
 |---|---|
 | `app.py` | Flask server: `/api/solve` (steps), `/api/chat` (agent), `/api/config` |
-| `llm.py` | LLM agent: tools, system prompt, Anthropic / OpenAI adapters, mock mode |
+| `llm.py` | LLM agent: tools, system prompt, OpenRouter adapter, mock mode |
 | `templates/index.html` | Page (preloader, form, chat bar, bubble) |
 | `static/js/main.js` | Poora show: steps, chat, characters ka intezam |
 | `static/js/stage.js` | Three.js: character load (GLB / FBX), walk, gestures, head tracking |

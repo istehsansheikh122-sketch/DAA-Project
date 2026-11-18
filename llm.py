@@ -6,11 +6,7 @@ Character ke chat ke peeche ek chhota "agent" hai:
     bhejna, gesture karna, aur kisi step ki details poochna.
   * Server tools chalata hai, aur aakhir mein {reply, actions} browser ko bhejta hai.
 
-Providers (koi extra package nahi, sirf Python ka urllib):
-  * anthropic  -> OPENROUTER_API_KEY (Claude)
-  * openai     -> OPENAI_API_KEY (+ OPENAI_BASE_URL: OpenAI, Gemini, Groq, Ollama... jo bhi
-                  OpenAI-compatible ho)
-  * mock       -> koi key na ho to demo mode (built-in simple jawab)
+OpenRouter (koi extra package nahi, sirf Python ka urllib); key na ho to demo mode.
 """
 import json
 import os
@@ -87,29 +83,19 @@ def describe():
     prov = provider()
     if prov == "mock":
         why = ENV_STATUS["hint"] or (
-            f".env found at {ENV_STATUS['file']} but it has no OPENROUTER_API_KEY / OPENAI_API_KEY value."
+            f".env found at {ENV_STATUS['file']} but it has no OPENROUTER_API_KEY value."
             if ENV_STATUS["file"] else f"No .env file found (looked in: {', '.join(ENV_STATUS['tried'])}).")
         return f"LLM: DEMO MODE (no key). {why}"
-    return f"LLM: {prov} / {model_name()} (key loaded{' from ' + ENV_STATUS['file'] if ENV_STATUS['file'] else ' from environment'})"
+    return f"LLM: OpenRouter / {model_name()} (key loaded{' from ' + ENV_STATUS['file'] if ENV_STATUS['file'] else ' from environment'})"
 
 
 def provider():
-    name = os.getenv("LLM_PROVIDER", "").strip().lower()
-    if name in {"anthropic", "openai", "mock"}:
-        return name
-    if os.getenv("OPENROUTER_API_KEY"):
-        return "anthropic"
-    if os.getenv("OPENAI_API_KEY"):
-        return "openai"
-    return "mock"
+    return "openrouter" if os.getenv("OPENROUTER_API_KEY") else "mock"
 
 
 def model_name():
-    prov = provider()
-    if prov == "anthropic":
-        return os.getenv("OPENROUTER_MODEL", "claude-haiku-5-5")
-    if prov == "openai":
-        return os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    if provider() == "openrouter":
+        return os.getenv("OPENROUTER_MODEL", "openrouter/free")
     return "demo"
 
 
@@ -305,48 +291,12 @@ def _alternate(history, message):
     return msgs
 
 
-# ----------------------------------------------------------------- adapters
-class AnthropicAdapter:
+# ----------------------------------------------------------------- OpenRouter adapter
+class OpenRouterAdapter:
     def __init__(self):
         self.key = os.environ["OPENROUTER_API_KEY"]
-        self.url = os.getenv("OPENROUTER_BASE_URL", "https://api.anthropic.com").rstrip("/") + "/v1/messages"
-
-    def init(self, system, history, message):
-        return {"system": system, "messages": _alternate(history, message)}
-
-    def step(self, conv):
-        data = _post(
-            self.url,
-            {"x-api-key": self.key, "anthropic-version": "2023-06-01"},
-            {
-                "model": model_name(),
-                "max_tokens": MAX_TOKENS,
-                "system": conv["system"],
-                "tools": TOOLS,
-                "messages": conv["messages"],
-            },
-        )
-        blocks = data.get("content") or []
-        conv["messages"].append({"role": "assistant", "content": blocks})
-        text = " ".join(b.get("text", "") for b in blocks if b.get("type") == "text").strip()
-        calls = [
-            {"id": b["id"], "name": b["name"], "args": b.get("input") or {}}
-            for b in blocks if b.get("type") == "tool_use"
-        ]
-        return text, calls
-
-    def add_results(self, conv, results):
-        conv["messages"].append({
-            "role": "user",
-            "content": [{"type": "tool_result", "tool_use_id": cid, "content": out} for cid, _name, out in results],
-        })
-
-
-class OpenAIAdapter:
-    def __init__(self):
-        self.key = os.environ.get("OPENAI_API_KEY", "")
-        base = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
-        self.url = base + "/chat/completions"
+        base = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").rstrip("/")
+        self.url = base if base.endswith("/chat/completions") else base + "/chat/completions"
         self.tools = [
             {"type": "function", "function": {
                 "name": t["name"], "description": t["description"], "parameters": t["input_schema"]}}
@@ -408,6 +358,14 @@ def mock_reply(message, state, lang, actions, name="Guide"):
     if has("your name", "who are you", "naam kya", "tumhara naam", "aapka naam", "aap ka naam", "tumhaara naam", "kaun ho", "kon ho"):
         return pick(f"I'm {name}, your binary search guide!", f"Mera naam {name} hai, main aap ki binary search guide hoon!")
 
+    if has("algorithm", "binary search") and has("why", "need", "use", "purpose", "advantage"):
+        actions.append({"type": "gesture", "name": "happy"})
+        return pick(
+            "We use binary search because it finds items in a sorted list much faster than checking one by one. "
+            "Each comparison cuts the remaining search area roughly in half.",
+            "Hum binary search is liye use karte hain kyun ke sorted list mein yeh ek ek item check karne ke bajaye "
+            "har comparison par baqi search area ko taqreeban aadha kar deti hai.")
+
     if step and has("mid", "middle", "darmiyan", "centre", "center", "kaise nikal", "kese nikal"):
         low, high, mid, val = step["low"], step["high"], step["mid"], step["value"]
         actions += [{"type": "highlight", "indices": [mid]}, {"type": "gesture", "name": "ack"}]
@@ -425,16 +383,40 @@ def mock_reply(message, state, lang, actions, name="Guide"):
             "Binary search ke liye list sorted honi zaroori hai, tab hi hum keh sakte hain ke darmiyan ke ek "
             "taraf sab chhote aur doosri taraf sab bade number hain.")
 
-    if has("half", "aadha", "adha", "ignore", "discard", "phenk", "hata"):
+    if step and has("skip", "ignore", "discard", "why", "array", "index", "half"):
         actions.append({"type": "gesture", "name": "dismiss"})
-        if step:
-            lo, hi = (0, step["mid"]) if step["result"] == "right" else (step["mid"], len(state["sorted"]) - 1)
-            actions.append({"type": "highlight", "indices": [lo, hi]})
+        low, high, mid, value = step["low"], step["high"], step["mid"], step["value"]
+        if step["result"] == "found":
+            actions.append({"type": "highlight", "indices": [mid]})
+            return pick(
+                f"We don't skip that range: the target was found at index {mid}, where the value is {value}.",
+                f"Hum woh range skip nahi karte: target index {mid} par mil gaya, jahan value {value} hai.")
+        if step["result"] == "right":
+            end = min(mid, high)
+            discarded = list(range(low, end + 1))
+            actions.append({"type": "highlight", "indices": discarded[:6]})
+            return pick(
+                f"At step {step['step']}, index {mid} had {value}, which is below the target {t}. Since the list is "
+                f"sorted, indices {low} through {end} are too small, so we continue from index {end + 1}.",
+                f"Step {step['step']} mein index {mid} par {value} tha, jo target {t} se chhota hai. List sorted hai, "
+                f"is liye index {low} se {end} tak sab chhote hain; hum index {end + 1} se aage dekhte hain.")
+        start = max(mid, low)
+        discarded = list(range(start, high + 1))
+        actions.append({"type": "highlight", "indices": discarded[:6]})
         return pick(
-            "If the middle number is smaller than my target, the target can't be on the left, so that half is "
-            "thrown away. If it's bigger, I throw away the right half.",
-            "Agar darmiyan wala number target se chhota ho to target left mein ho hi nahi sakta, is liye wo hissa "
-            "phenk dete hain. Agar bada ho to right hissa phenk dete hain.")
+            f"At step {step['step']}, index {mid} had {value}, which is above the target {t}. Since the list is "
+            f"sorted, indices {start} through {high} are too large, so we continue before index {start}.",
+            f"Step {step['step']} mein index {mid} par {value} tha, jo target {t} se bara hai. List sorted hai, "
+            f"is liye index {start} se {high} tak sab bare hain; hum index {start} se pehle dekhte hain.")
+
+    if has("compare", "comparison", "other", "slow", "linear", "versus", "vs", "fast"):
+        n = max(len(state["sorted"]), 1)
+        actions.append({"type": "gesture", "name": "happy"})
+        return pick(
+            f"Binary search is fast for sorted data: with {n} items it needs at most about {n.bit_length()} checks, "
+            f"while linear search may check all {n}.",
+            f"Sorted data mein binary search tez hai: {n} items ke liye taqreeban {n.bit_length()} checks, jab ke "
+            f"linear search ko {n} tak check karne par sakte hain.")
 
     if has("log", "complex", "fast", "tez", "time", "speed", "o("):
         n = max(len(state["sorted"]), 1)
@@ -458,10 +440,8 @@ def mock_reply(message, state, lang, actions, name="Guide"):
 
     actions.append({"type": "gesture", "name": "nod"})
     return pick(
-        "I'm in demo mode (no LLM key is set), so I only know a few things. Try asking: how is the middle "
-        "found, why must the list be sorted, why do we ignore half, or explain this step again.",
-        "Main demo mode mein hoon (LLM key set nahi hai), is liye kam cheezein jaanti hoon. Poochiye: darmiyan "
-        "kaise nikalte hain, list sorted kyun chahiye, aadha hissa kyun phenkte hain, ya ye step dobara samjhayein.")
+        "I can explain why binary search needs a sorted list, how the middle is chosen, or why one side is ruled out.",
+        "Main samjha sakti hoon ke binary search ko sorted list kyun chahiye, darmiyan kaise chunte hain, ya ek taraf kyun hata dete hain.")
 
 
 # ----------------------------------------------------------------- agent loop
@@ -478,7 +458,7 @@ def run_agent(message, history, raw_state, lang, name="Guide", gender="f"):
     if prov == "mock":
         return mock_reply(message, state, lang, actions, name), actions
 
-    adapter = AnthropicAdapter() if prov == "anthropic" else OpenAIAdapter()
+    adapter = OpenRouterAdapter()
     conv = adapter.init(build_system_prompt(state, lang, name, gender), history, message)
     texts = []
     for _ in range(MAX_AGENT_STEPS):
@@ -492,5 +472,5 @@ def run_agent(message, history, raw_state, lang, name="Guide", gender="f"):
     reply = " ".join(texts).strip()
     reply = re.sub(r"[*_`#]+", "", reply)          # markdown hata do (bol kar padha jayega)
     if not reply:
-        reply = "Hmm, mujhe samajh nahi aaya, dobara poochiye?" if lang == "ur" else "Hmm, I didn't catch that. Could you ask again?"
+        reply = mock_reply(message, state, lang, actions, name)
     return reply, actions[:6]
